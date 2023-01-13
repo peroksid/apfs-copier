@@ -1,6 +1,5 @@
-use std::{path::Path, path::PathBuf, fs, thread, time, collections::HashSet, sync::Mutex};
 use clap::Parser;
-
+use std::{collections::HashSet, fs, path::Path, path::PathBuf, sync::Mutex, thread, time};
 
 #[macro_use]
 extern crate lazy_static;
@@ -8,7 +7,6 @@ extern crate lazy_static;
 //const MOUNT_POINT: &str = "   ";
 //const SOURCE_DIR: &str = "/mnt/media/root";
 //const DEST_DIR: &str = "/media/ubuntu/My Passport/white";
-
 
 #[derive(Parser)]
 struct Cli {
@@ -18,11 +16,8 @@ struct Cli {
     dest: PathBuf,
 }
 
-
 lazy_static! {
-    static ref  FAILED_CONNECTION_ABORTS: Mutex<HashSet<String>> = {
-        Mutex::new(HashSet::new())
-    };
+    static ref FAILED_CONNECTION_ABORTS: Mutex<HashSet<String>> = { Mutex::new(HashSet::new()) };
 }
 
 fn main() {
@@ -32,20 +27,19 @@ fn main() {
     println!("done!");
 }
 
-fn initial_mount_check(args: &Cli){
+fn initial_mount_check(args: &Cli) {
     match fs::read_dir(args.source.as_path()) {
         Ok(dir_content) => {
             println!("{:#?}", dir_content);
-
-        },
+        }
         Err(e) => match e.raw_os_error() {
             Some(107) => {
                 // Transport endpoint is not connected
                 println!("Transport endpoint is not connected, mounting at start");
                 mount(args.device.as_str(), args.mount_point.as_str());
-            },
+            }
             _ => panic!("Error: {}", e),
-        }
+        },
     };
     println!("passed initial mount check");
 }
@@ -57,7 +51,9 @@ fn copy_tree(args: &Cli) {
         if is_failure(&path) {
             continue;
         }
-        let dest_path = args.dest.join(path.strip_prefix(args.source.as_path()).unwrap());
+        let dest_path = args
+            .dest
+            .join(path.strip_prefix(args.source.as_path()).unwrap());
         if path.is_dir() {
             fs::create_dir_all(&dest_path).unwrap();
             let mut need_remount = false;
@@ -70,12 +66,10 @@ fn copy_tree(args: &Cli) {
                             // can't remount here because the file we failed to open is still in use preventing umount
                             need_remount = true;
                             break;
-                        }, // Software caused connection abort -- this is we're here, need to remount, remember not to try this path again, and continue
+                        } // Software caused connection abort -- this is we're here, need to remount, remember not to try this path again, and continue
                         _ => panic!("Error: {}", e),
                     },
                 };
-
-
             }
 
             if need_remount {
@@ -101,9 +95,11 @@ fn copy_file(args: &Cli, from: &Path, to: &Path) -> Result<(), std::io::Error> {
     }
 }
 
-
-fn handle_software_caused_connection_abort(args: &Cli, path: &Path) -> Result<(), std::io::Error>{
-    println!("Software caused connection abort, remounting and continuing: {}", &path.to_str().unwrap().to_string());
+fn handle_software_caused_connection_abort(args: &Cli, path: &Path) -> Result<(), std::io::Error> {
+    println!(
+        "Software caused connection abort, remounting and continuing: {}",
+        &path.to_str().unwrap().to_string()
+    );
     remember_failure(path);
     remount(args);
     println!("remounted, continuing");
@@ -153,11 +149,14 @@ fn remount(args: &Cli) {
     mount(args.device.as_str(), args.mount_point.as_str());
 }
 
-fn remember_failure(path: &Path){
+fn remember_failure(path: &Path) {
     let mut set = FAILED_CONNECTION_ABORTS.lock().unwrap();
     set.insert(path.to_str().unwrap().to_string());
 }
 
 fn is_failure(path: &Path) -> bool {
-    FAILED_CONNECTION_ABORTS.lock().unwrap().contains(&path.to_str().unwrap().to_string())
+    FAILED_CONNECTION_ABORTS
+        .lock()
+        .unwrap()
+        .contains(&path.to_str().unwrap().to_string())
 }
