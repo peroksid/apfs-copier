@@ -1,11 +1,23 @@
 use std::{path::Path, path::PathBuf, fs, thread, time, collections::HashSet, sync::Mutex};
+use clap::Parser;
+
 
 #[macro_use]
 extern crate lazy_static;
 
-const MOUNT_POINT: &str = "/mnt/media";
-const SOURCE_DIR: &str = "/mnt/media/root";
-const DEST_DIR: &str = "/media/ubuntu/My Passport/white";
+//const MOUNT_POINT: &str = "   ";
+//const SOURCE_DIR: &str = "/mnt/media/root";
+//const DEST_DIR: &str = "/media/ubuntu/My Passport/white";
+
+
+#[derive(Parser)]
+struct Cli {
+    device: String,
+    mount_point: String,
+    source: PathBuf,
+    dest: PathBuf,
+}
+
 
 lazy_static! {
     static ref  FAILED_CONNECTION_ABORTS: Mutex<HashSet<String>> = {
@@ -14,16 +26,14 @@ lazy_static! {
 }
 
 fn main() {
-    initial_mount_check();
-    let source = Path::new(SOURCE_DIR);
-    let dest = Path::new(DEST_DIR);
-    copy_tree(source, dest);
+    let args = Cli::parse();
+    initial_mount_check(&args);
+    copy_tree(&args);
     println!("done!");
 }
 
-fn initial_mount_check(){
-    let source = Path::new(SOURCE_DIR);
-    match fs::read_dir(&source) {
+fn initial_mount_check(args: &Cli){
+    match fs::read_dir(args.source.as_path()) {
         Ok(dir_content) => {
             println!("{:#?}", dir_content);
 
@@ -32,7 +42,7 @@ fn initial_mount_check(){
             Some(107) => {
                 // Transport endpoint is not connected
                 println!("Transport endpoint is not connected, mounting at start");
-                mount();
+                mount(args.device.as_str(), args.mount_point.as_str());
             },
             _ => panic!("Error: {}", e),
         }
@@ -40,14 +50,14 @@ fn initial_mount_check(){
     println!("passed initial mount check");
 }
 
-fn copy_tree(source: &Path, dest: &Path) {
+fn copy_tree(args: &Cli) {
     let mut stack = vec![];
-    stack.push(PathBuf::from(source));
+    stack.push(PathBuf::from(&args.source));
     while let Some(path) = stack.pop() {
         if is_failure(&path) {
             continue;
         }
-        let dest_path = dest.join(path.strip_prefix(source).unwrap());
+        let dest_path = args.dest.join(path.strip_prefix(args.source.as_path()).unwrap());
         if path.is_dir() {
             fs::create_dir_all(&dest_path).unwrap();
             let mut need_remount = false;
@@ -69,15 +79,15 @@ fn copy_tree(source: &Path, dest: &Path) {
             }
 
             if need_remount {
-                handle_software_caused_connection_abort(&path).unwrap();
+                handle_software_caused_connection_abort(args, &path).unwrap();
             }
         } else {
-            copy_file(path.as_path(), dest_path.as_path()).unwrap();
+            copy_file(args, path.as_path(), dest_path.as_path()).unwrap();
         }
     }
 }
 
-fn copy_file(from: &Path, to: &Path) -> Result<(), std::io::Error> {
+fn copy_file(args: &Cli, from: &Path, to: &Path) -> Result<(), std::io::Error> {
     if to.exists() {
         return Ok(());
     }
@@ -85,25 +95,25 @@ fn copy_file(from: &Path, to: &Path) -> Result<(), std::io::Error> {
         Ok(_) => Ok(()),
         Err(e) => match e.raw_os_error() {
             Some(5) => Ok(()), //  input-output error, can't get source data, just continue
-            Some(103) => handle_software_caused_connection_abort(from), // Software caused connection abort -- this is we're here, need to remount, remember not to try this path again, and continue
-            _ => Err(e),
+            Some(103) => handle_software_caused_connection_abort(args, from), // Software caused connection abort -- this is we're here, need to remount, remember not to try this path again, and continue
+            _ => panic!("Error: {:#?} From: '{:#?}' To: '{:#?}'", e, from, to),
         },
     }
 }
 
 
-fn handle_software_caused_connection_abort(path: &Path) -> Result<(), std::io::Error>{
+fn handle_software_caused_connection_abort(args: &Cli, path: &Path) -> Result<(), std::io::Error>{
     println!("Software caused connection abort, remounting and continuing: {}", &path.to_str().unwrap().to_string());
     remember_failure(path);
-    remount();
+    remount(args);
     println!("remounted, continuing");
     Ok(())
 }
 
-fn umount() {
+fn umount(mount_point: &str) {
     let output = std::process::Command::new("sudo")
         .arg("umount")
-        .arg(MOUNT_POINT)
+        .arg(mount_point)
         .output()
         .expect("failed to execute umount");
     println!("status: {}", output.status);
@@ -117,11 +127,11 @@ fn umount() {
     thread::sleep(time::Duration::from_secs(10));
 }
 
-fn mount(){
+fn mount(device: &str, mount_point: &str) {
     let output = std::process::Command::new("sudo")
         .arg("apfs-fuse")
-        .arg("/dev/sdc2")
-        .arg(MOUNT_POINT)
+        .arg(device)
+        .arg(mount_point)
         .output()
         .expect("failed to execute mount");
     println!("status: {}", output.status);
@@ -130,17 +140,17 @@ fn mount(){
     if output.status.success() {
         println!("mounted");
     } else {
-        umount();
+        umount(mount_point);
         println!("failed to mount, retrying");
-        mount();
+        mount(device, mount_point);
     }
     thread::sleep(time::Duration::from_secs(10));
 }
 
-fn remount() {
+fn remount(args: &Cli) {
     println!("remounting");
-    umount();
-    mount();
+    umount(args.mount_point.as_str());
+    mount(args.device.as_str(), args.mount_point.as_str());
 }
 
 fn remember_failure(path: &Path){
