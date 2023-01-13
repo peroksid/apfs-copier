@@ -4,11 +4,10 @@ use std::{collections::HashSet, fs, path::Path, path::PathBuf, sync::Mutex, thre
 #[macro_use]
 extern crate lazy_static;
 
-//const MOUNT_POINT: &str = "   ";
-//const SOURCE_DIR: &str = "/mnt/media/root";
-//const DEST_DIR: &str = "/media/ubuntu/My Passport/white";
-
 #[derive(Parser)]
+#[command(name= "APFS Copier")]
+#[command(about = "Copy a directory tree from a mounted APFS volume to a destination directory on ExFAT volume in Linux")]
+#[command(author = "Alexander Pugachev")]
 struct Cli {
     device: String,
     mount_point: String,
@@ -51,11 +50,23 @@ fn copy_tree(args: &Cli) {
         if is_failure(&path) {
             continue;
         }
-        let dest_path = args
+        // every component of dest path must be escaped properly because it's created underscored at the destination
+        let dest_path: PathBuf = args
             .dest
-            .join(path.strip_prefix(args.source.as_path()).unwrap());
+            .join(path.strip_prefix(args.source.as_path()).unwrap()).iter()
+            .map(|p| underscore_non_windows_chars(p.to_str().unwrap().to_string()))
+            .collect();
         if path.is_dir() {
-            fs::create_dir_all(&dest_path).unwrap();
+
+            match fs::create_dir_all(&dest_path) {
+                Ok(_) => (),
+                Err(e) => match e.raw_os_error() {
+                    Some(22) => {
+                        fs::create_dir_all(replace_forbidden_characters(&dest_path)).unwrap();
+                    }
+                    _ => panic!("Error: {:#?} From: '{:#?}' To: '{:#?}'", e, &path, &dest_path),
+                },
+            }
             let mut need_remount = false;
 
             for entry in fs::read_dir(&path).unwrap() {
@@ -90,6 +101,7 @@ fn copy_file(args: &Cli, from: &Path, to: &Path) -> Result<(), std::io::Error> {
         Err(e) => match e.raw_os_error() {
             Some(5) => Ok(()), //  input-output error, can't get source data, just continue
             Some(103) => handle_software_caused_connection_abort(args, from), // Software caused connection abort -- this is we're here, need to remount, remember not to try this path again, and continue
+            Some(22) => copy_file(args, from, replace_forbidden_characters(to).as_path()),
             _ => panic!("Error: {:#?} From: '{:#?}' To: '{:#?}'", e, from, to),
         },
     }
@@ -159,4 +171,65 @@ fn is_failure(path: &Path) -> bool {
         .lock()
         .unwrap()
         .contains(&path.to_str().unwrap().to_string())
+}
+
+fn replace_forbidden_characters(path: &Path) -> PathBuf {
+    let mut new_path = PathBuf::from(path);
+    new_path.set_file_name(underscore_non_windows_chars(
+        path.file_name().unwrap().to_str().unwrap().to_string(),
+    ));
+    new_path
+}
+
+fn underscore_non_windows_chars(filename: String) -> String {
+    // " * / : < > ? \ |
+    filename
+        .replace("\"", "_")
+        .replace("*", "_")
+        .replace("/", "_")
+        .replace(":", "_")
+        .replace("<", "_")
+        .replace(">", "_")
+        .replace("?", "_")
+        .replace("\\", "_")
+        .replace("|", "_")
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn it_underscore_non_windows_chars() {
+        assert_eq!(
+            super::underscore_non_windows_chars("foo\"bar".to_string()),
+            "foo_bar".to_string()
+        );
+        assert_eq!(
+            super::underscore_non_windows_chars("foo*bar".to_string()),
+            "foo_bar".to_string()
+        );
+        assert_eq!(
+            super::underscore_non_windows_chars("foo/bar".to_string()),
+            "foo_bar".to_string()
+        );
+        assert_eq!(
+            super::underscore_non_windows_chars("foo:bar".to_string()),
+            "foo_bar".to_string()
+        );
+        assert_eq!(
+            super::underscore_non_windows_chars("foo<bar".to_string()),
+            "foo_bar".to_string()
+        );
+        assert_eq!(
+            super::underscore_non_windows_chars("foo>bar".to_string()),
+            "foo_bar".to_string()
+        );
+        assert_eq!(
+            super::underscore_non_windows_chars("foo\\bar".to_string()),
+            "foo_bar".to_string()
+        );
+        assert_eq!(
+            super::underscore_non_windows_chars("foo|bar".to_string()),
+            "foo_bar".to_string()
+        );
+    }
 }
