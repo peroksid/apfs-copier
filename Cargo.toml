@@ -2,7 +2,10 @@
 name = "aspf-copier"
 version = "0.1.0"
 edition = "2021"
-
+description = "A tool to copy files from a source directory to a destination directory, while preserving the directory structure of the source directory."
+authors = ["Alexander Pugacheev <alexander.pugachev@gmail.com>"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/peroksid/apfs-copier"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
