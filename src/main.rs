@@ -102,6 +102,7 @@ fn copy_file(args: &Cli, from: &Path, to: &Path) -> Result<(), std::io::Error> {
             Some(5) => Ok(()), //  input-output error, can't get source data, just continue
             Some(103) => handle_software_caused_connection_abort(args, from), // Software caused connection abort -- this is we're here, need to remount, remember not to try this path again, and continue
             Some(22) => copy_file(args, from, replace_forbidden_characters(to).as_path()),
+            Some(2) => Ok(()), // broken link, just continue - TODO: stat to confirm it was a link
             _ => panic!("Error: {:#?} From: '{:#?}' To: '{:#?}'", e, from, to),
         },
     }
@@ -186,7 +187,9 @@ fn underscore_non_windows_chars(filename: String) -> String {
     filename
         .replace("\"", "_")
         .replace("*", "_")
-        .replace("/", "_")
+        // when iterate through path components, first component is root, so we don't want to replace root
+        // todo: bypas firs component from escaping and used unchanged
+        //.replace("/", "_")
         .replace(":", "_")
         .replace("<", "_")
         .replace(">", "_")
@@ -207,10 +210,10 @@ mod tests {
             super::underscore_non_windows_chars("foo*bar".to_string()),
             "foo_bar".to_string()
         );
-        assert_eq!(
+        /*assert_eq!(
             super::underscore_non_windows_chars("foo/bar".to_string()),
             "foo_bar".to_string()
-        );
+        );*/
         assert_eq!(
             super::underscore_non_windows_chars("foo:bar".to_string()),
             "foo_bar".to_string()
